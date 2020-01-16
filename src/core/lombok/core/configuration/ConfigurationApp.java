@@ -204,7 +204,7 @@ public class ConfigurationApp extends LombokApp {
 				out.println();
 			}
 			URI directory = entry.getKey();
-			ConfigurationResolver resolver = new BubblingConfigurationResolver(cache.sourcesForDirectory(directory, parser));
+			ConfigurationResolver resolver = new BubblingConfigurationResolver(cache.forUri(directory), cache.fileToSource(parser));
 			Map<ConfigurationKey<?>, ? extends Collection<String>> traces = trace(keys, directory);
 			boolean printed = false;
 			for (ConfigurationKey<?> key : keys) {
@@ -258,7 +258,7 @@ public class ConfigurationApp extends LombokApp {
 			File configFile = new File(currentDirectory, "lombok.config");
 			if (!configFile.exists() || !configFile.isFile()) continue;
 			
-			ConfigurationFile context = ConfigurationFile.fromFile(configFile);
+			ConfigurationFile context = ConfigurationFile.forFile(configFile);
 			Map<ConfigurationKey<?>, List<String>> traces = trace(context, keys);
 			
 			stopBubbling = stopBubbling(traces.get(ConfigurationKeys.STOP_BUBBLING));
