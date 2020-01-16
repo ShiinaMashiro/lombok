@@ -143,7 +143,7 @@ public abstract class ConfigurationFile {
 		}
 
 		@Override ConfigurationFile parent() {
-			File parent = file.getParentFile();
+			File parent = file.getParentFile().getParentFile();
 			return parent == null ? null : forDirectory(parent);
 		}
 	}
