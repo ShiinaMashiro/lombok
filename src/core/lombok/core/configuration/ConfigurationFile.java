@@ -26,6 +26,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 
 public abstract class ConfigurationFile {
 	private static final String LOMBOK_CONFIG_FILENAME = "lombok.config";
@@ -64,12 +65,12 @@ public abstract class ConfigurationFile {
 		return identifier;
 	}
 	
-	@Override public boolean equals(Object obj) {
+	@Override public final boolean equals(Object obj) {
 		if (!(obj instanceof ConfigurationFile)) return false;
 		return identifier.equals(((ConfigurationFile)obj).identifier);
 	}
 	
-	@Override public int hashCode() {
+	@Override public final int hashCode() {
 		return identifier.hashCode();
 	}
 	
@@ -110,7 +111,18 @@ public abstract class ConfigurationFile {
 		}
 		
 		public ConfigurationFile resolve(String path) {
-			File file = resolveFile(path);
+			if (path.endsWith("!")) return null;
+			
+			String[] parts = path.split("!");
+			if (parts.length > 2) return null;
+			
+			String realFileName = parts[0];
+			File file = resolveFile(realFileName);
+			if (realFileName.endsWith(".zip") || realFileName.endsWith(".jar")) {
+				return ArchivedConfigurationFile.create(file, parts.length == 1 ? LOMBOK_CONFIG_FILENAME : parts[1]);
+			}
+			
+			if (parts.length > 1) return null;
 			return file == null ? null : forFile(file);
 		}
 		
@@ -144,6 +156,59 @@ public abstract class ConfigurationFile {
 		@Override ConfigurationFile parent() {
 			File parent = file.getParentFile().getParentFile();
 			return parent == null ? null : forDirectory(parent);
+		}
+	}
+	
+	private static class ArchivedConfigurationFile extends ConfigurationFile {
+		private static final URI ROOT1 = URI.create("http://x.y/a/");
+		private static final URI ROOT2 = URI.create("ftp://y.x/b/");
+		
+		private final File archive;
+		private final URI path;
+		
+		public static ConfigurationFile create(File file, String path) {
+			
+			// TODO Auto-generated method stub
+			return null;
+		}
+		
+		static boolean isRelative(String path) {
+			try {
+				return ROOT1.resolve(path).toString().startsWith(ROOT1.toString()) && ROOT2.resolve(path).toString().startsWith(ROOT2.toString());
+			} catch (Exception e) {
+				return false;
+			}
+		}
+		
+		ArchivedConfigurationFile(File archive, URI path) {
+			super(archive.getPath() + "!" + path.getPath());
+			this.archive = archive;
+			this.path = path;
+		}
+		
+		@Override
+		long getLastModifiedOrMissing() {
+			return getLastModifiedOrMissing(archive);
+		}
+		
+		@Override
+		boolean exists() {
+			return false;
+		}
+		
+		@Override
+		CharSequence contents() throws IOException {
+			return null;
+		}
+		
+		@Override
+		public ConfigurationFile resolve(String path) {
+			return null;
+		}
+		
+		@Override
+		ConfigurationFile parent() {
+			return null;
 		}
 	}
 	
