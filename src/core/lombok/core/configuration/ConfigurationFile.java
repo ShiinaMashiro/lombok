@@ -27,6 +27,10 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public abstract class ConfigurationFile {
 	private static final String LOMBOK_CONFIG_FILENAME = "lombok.config";
@@ -85,17 +89,13 @@ public abstract class ConfigurationFile {
 	
 	private static String read(InputStream is) throws IOException {
 		byte[] b = buffers.get();
-		try {
-			ByteArrayOutputStream out = new ByteArrayOutputStream();
-			while (true) {
-				int r = is.read(b);
-				if (r == -1) break;
-				out.write(b, 0, r);
-			}
-			return new String(out.toByteArray(), "UTF-8");
-		} finally {
-			is.close();
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		while (true) {
+			int r = is.read(b);
+			if (r == -1) break;
+			out.write(b, 0, r);
 		}
+		return new String(out.toByteArray(), "UTF-8");
 	}
 	
 	private static class RegularConfigurationFile extends ConfigurationFile {
@@ -119,7 +119,11 @@ public abstract class ConfigurationFile {
 			String realFileName = parts[0];
 			File file = resolveFile(realFileName);
 			if (realFileName.endsWith(".zip") || realFileName.endsWith(".jar")) {
-				return ArchivedConfigurationFile.create(file, parts.length == 1 ? LOMBOK_CONFIG_FILENAME : parts[1]);
+				try {
+					return ArchivedConfigurationFile.create(file, URI.create(parts.length == 1 ? LOMBOK_CONFIG_FILENAME : parts[1]));
+				} catch (Exception e) {
+					return null;
+				}
 			}
 			
 			if (parts.length > 1) return null;
@@ -150,7 +154,12 @@ public abstract class ConfigurationFile {
 		
 		@Override
 		CharSequence contents() throws IOException {
-			return read(new FileInputStream(file));
+			FileInputStream is = new FileInputStream(file);
+			try {
+				return read(is);
+			} finally {
+				is.close();
+			}
 		}
 
 		@Override ConfigurationFile parent() {
@@ -163,16 +172,20 @@ public abstract class ConfigurationFile {
 		private static final URI ROOT1 = URI.create("http://x.y/a/");
 		private static final URI ROOT2 = URI.create("ftp://y.x/b/");
 		
-		private final File archive;
-		private final URI path;
+		private static final ConcurrentMap<String, Object> locks = new ConcurrentHashMap<String, Object>();
 		
-		public static ConfigurationFile create(File file, String path) {
-			
-			// TODO Auto-generated method stub
-			return null;
+		private final File archive;
+		private final URI file;
+		private final Object lock;
+		private long lastModified = -2;
+		private String contents;
+		
+		public static ConfigurationFile create(File archive, URI file) {
+			if (!isRelative(file)) return null;
+			return new ArchivedConfigurationFile(archive, file, archive.getPath() + "!" + file.getPath());
 		}
 		
-		static boolean isRelative(String path) {
+		static boolean isRelative(URI path) {
 			try {
 				return ROOT1.resolve(path).toString().startsWith(ROOT1.toString()) && ROOT2.resolve(path).toString().startsWith(ROOT2.toString());
 			} catch (Exception e) {
@@ -180,10 +193,12 @@ public abstract class ConfigurationFile {
 			}
 		}
 		
-		ArchivedConfigurationFile(File archive, URI path) {
-			super(archive.getPath() + "!" + path.getPath());
+		ArchivedConfigurationFile(File archive, URI file, String description) {
+			super(description);
 			this.archive = archive;
-			this.path = path;
+			this.file = file;
+			locks.putIfAbsent(archive.getPath(), new Object());
+			this.lock = locks.get(archive.getPath());
 		}
 		
 		@Override
@@ -193,17 +208,63 @@ public abstract class ConfigurationFile {
 		
 		@Override
 		boolean exists() {
-			return false;
+			if (!fileExists(archive)) return false;
+			synchronized (lock) {
+				try {
+					readIfNeccesary();
+					return contents != null;
+				} catch (Exception e) {
+					return false;
+				}
+			}
 		}
 		
 		@Override
 		CharSequence contents() throws IOException {
-			return null;
+			synchronized (lock) {
+				readIfNeccesary();
+				return contents;
+			}
+		}
+		
+		void readIfNeccesary() throws IOException {
+			long archiveModified = getLastModifiedOrMissing();
+			if (archiveModified == lastModified) return;
+			contents = null;
+			lastModified = archiveModified;
+			if (archiveModified == FileSystemSourceCache.MISSING) return;
+			contents = read();
+		}
+		
+		private String read() throws IOException {
+			FileInputStream is = new FileInputStream(archive);
+			try {
+				ZipInputStream zip = new ZipInputStream(is);
+				try {
+					while (true) {
+						ZipEntry entry = zip.getNextEntry();
+						if (entry == null) return null;
+						if (entry.getName().equals(file.getPath())) {
+							return read(zip);
+						}
+					}
+				} finally {
+					zip.close();
+				}
+			} finally {
+				is.close();
+			}
 		}
 		
 		@Override
 		public ConfigurationFile resolve(String path) {
-			return null;
+			try {
+				URI resolved = file.resolve(path);
+				if (!isRelative(resolved)) return null;
+				return create(archive, resolved);
+			} catch (Exception e) {
+				return null;
+			}
 		}
 		
 		@Override
